@@ -1,0 +1,155 @@
+---
+title: 'Building Damage Map'
+jupyter: python3
+format:
+  html:
+    minimal: true
+    page-layout: custom
+    toc: false
+    code-tools: false
+    title-block-banner: false
+    html-table-processing: none
+    css: assets/styles.css
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+from pathlib import Path
+
+from branca.element import Element
+import folium
+import geopandas as gpd
+```
+
+```{python}
+DATA_PATH = Path('data/building_with _inference.geojson')
+DAMAGE_FIELD = 'predicted_class'
+
+buildings = gpd.read_file(DATA_PATH)
+if buildings.crs is None:
+    buildings = buildings.set_crs('EPSG:4326')
+buildings = buildings.to_crs('EPSG:4326')
+
+status = buildings[DAMAGE_FIELD].astype('string').str.strip().str.lower()
+scored = buildings.loc[status.isin(['damaged', 'undamaged'])].copy()
+scored['prediction'] = status.loc[scored.index]
+scored['confidence_pct'] = (100 * scored['confidence']).round(1).astype('string') + '%'
+scored['prob_damaged_pct'] = (100 * scored['prob_damaged']).round(1).astype('string') + '%'
+
+damaged_count = int(scored['prediction'].eq('damaged').sum())
+undamaged_count = int(scored['prediction'].eq('undamaged').sum())
+total_count = len(scored)
+
+map_center = (47.6588, -117.4260)
+
+m = folium.Map(
+    location=map_center,
+    zoom_start=10,
+    tiles=None,
+    control_scale=True,
+    prefer_canvas=True,
+)
+
+folium.TileLayer(
+    tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attr='Tiles &copy; Esri',
+    name='Esri World Street Map',
+    control=True,
+).add_to(m)
+
+folium.TileLayer(
+    tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attr='Tiles &copy; Esri',
+    name='Esri World Imagery',
+    control=True,
+    show=False,
+).add_to(m)
+
+
+def footprint_style(feature):
+    prediction = feature['properties'].get('prediction')
+    damaged = prediction == 'damaged'
+    return {
+        'color': '#9e1215' if damaged else '#1f5f8b',
+        'fillColor': '#d7191c' if damaged else '#2c7bb6',
+        'fillOpacity': 0.34 if damaged else 0.2,
+        'opacity': 0.85,
+        'weight': 0.8,
+    }
+
+
+def footprint_highlight(_feature):
+    return {
+        'fillOpacity': 0.58,
+        'weight': 1.8,
+    }
+
+
+popup_fields = [
+    'prediction',
+    'confidence_pct',
+    'prob_damaged_pct',
+    'image_path',
+    'id',
+]
+
+folium.GeoJson(
+    scored[
+        [
+            'id',
+            'image_path',
+            'prediction',
+            'confidence_pct',
+            'prob_damaged_pct',
+            'geometry',
+        ]
+    ],
+    name='Building footprints',
+    show=True,
+    style_function=footprint_style,
+    highlight_function=footprint_highlight,
+    tooltip=folium.GeoJsonTooltip(
+        fields=['prediction', 'prob_damaged_pct'],
+        aliases=['Prediction', 'Damage probability'],
+        sticky=False,
+    ),
+    popup=folium.GeoJsonPopup(
+        fields=popup_fields,
+        aliases=[
+            'Prediction',
+            'Confidence',
+            'Damage probability',
+            'Image',
+            'ID',
+        ],
+        labels=True,
+        max_width=360,
+    ),
+).add_to(m)
+
+bounds = scored.total_bounds
+m.fit_bounds(
+    [
+        [bounds[1], bounds[0]],
+        [bounds[3], bounds[2]],
+    ],
+    padding=(28, 28),
+    max_zoom=14,
+)
+
+legend_html = '''
+<div class='footprint-legend'>
+  <div><span class='legend-dot damaged'></span>Damaged</div>
+  <div><span class='legend-dot undamaged'></span>Undamaged</div>
+</div>
+'''
+
+m.get_root().html.add_child(Element(legend_html))
+
+folium.LayerControl(collapsed=False).add_to(m)
+
+m
+```

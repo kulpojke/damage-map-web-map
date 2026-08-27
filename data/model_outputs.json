@@ -1,0 +1,11 @@
+{
+  "damageField": "predicted_class",
+  "damagedValues": ["damaged"],
+  "undamagedValues": ["undamaged"],
+  "outputs": [
+    {
+      "name": "Current model output",
+      "url": "data/building_with _inference.geojson"
+    }
+  ]
+}

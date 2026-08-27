@@ -1,0 +1,16 @@
+name: damagemap-web
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - quarto
+  - jupyter
+  - ipykernel
+  - nbclient
+  - nbformat
+  - pandas
+  - geopandas
+  - shapely
+  - folium
+  - branca
+  - h3-py
