@@ -26,26 +26,33 @@ import h3
 ```
 
 ```{python}
+
+# paths to data
 DATA_PATH = Path('data/building_with _inference.geojson')
 DAMAGE_FIELD = 'predicted_class'
 
+# load buildings
 buildings = gpd.read_file(DATA_PATH)
 if buildings.crs is None:
     buildings = buildings.set_crs('EPSG:4326')
 buildings = buildings.to_crs('EPSG:4326')
 
+# standardise and parse damage class
 status = buildings[DAMAGE_FIELD].astype('string').str.strip().str.lower()
 scored = buildings.loc[status.isin(['damaged', 'undamaged'])].copy()
 scored['prediction'] = status.loc[scored.index]
 scored['confidence_pct'] = (100 * scored['confidence']).round(1).astype('string') + '%'
 scored['prob_damaged_pct'] = (100 * scored['prob_damaged']).round(1).astype('string') + '%'
 
+# summarise damage counts
 damaged_count = int(scored['prediction'].eq('damaged').sum())
 undamaged_count = int(scored['prediction'].eq('undamaged').sum())
 total_count = len(scored)
 
+# define map center upon render
 map_center = (47.6588, -117.4260)
 
+# create map
 m = folium.Map(
     location=map_center,
     zoom_start=10,
@@ -54,6 +61,7 @@ m = folium.Map(
     prefer_canvas=True,
 )
 
+# use arcgis basemaps
 folium.TileLayer(
     tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
     attr='Tiles &copy; Esri',
@@ -71,16 +79,21 @@ folium.TileLayer(
 
 
 def h3_cell_feature(cell, resolution, records):
+    '''Returns a GeoJSON Feature for one H3 cell with map attributes'''
+
+    # nab the attributes
     total = len(records)
     damaged = int(records['prediction'].eq('damaged').sum())
     undamaged = total - damaged
     damage_rate = damaged / total if total else 0
     avg_damage_prob = float(records['prob_damaged'].mean()) if total else 0
 
+    # define the hex geometry
     boundary = h3.cell_to_boundary(cell)
     coordinates = [[lng, lat] for lat, lng in boundary]
     coordinates.append(coordinates[0])
 
+    # return a dict to be a GeoJSON Feature
     return {
         'type': 'Feature',
         'properties': {
@@ -102,6 +115,11 @@ def h3_cell_feature(cell, resolution, records):
 
 
 def h3_geojson(data, resolution):
+    '''
+    Assigns building records to H3 cells and passes each group to h3_cell_feature()
+    Returns a GeoJSON FeatureCollection of H3 cells with map attributes
+    '''
+
     h3_data = data[['prediction', 'prob_damaged', 'geometry']].copy()
     points = h3_data.geometry.representative_point()
     h3_data['h3_cell'] = [
@@ -119,6 +137,7 @@ def h3_geojson(data, resolution):
 
 
 def h3_color(damage_rate):
+    '''Returns hexadecimal color based on damage'''
     if damage_rate >= 0.75:
         return '#b2182b'
     if damage_rate >= 0.5:
@@ -129,6 +148,7 @@ def h3_color(damage_rate):
 
 
 def h3_style(feature):
+    '''Returns style dict for hexgrid cell'''
     damage_rate = feature['properties'].get('damage_rate') or 0
     buildings = feature['properties'].get('buildings') or 0
     return {
@@ -141,14 +161,15 @@ def h3_style(feature):
 
 
 def h3_highlight(_feature):
+    '''Defines style for mouse hover'''
     return {
         'fillOpacity': 0.72,
         'weight': 2.0,
     }
 
-
+# create layers for each hexgrid resolution
 h3_layers = {}
-for resolution in [5, 6, 7, 8, 9, 10]:
+for resolution in [5, 6, 7, 8, 9, 10]: 
     h3_layer = folium.GeoJson(
         h3_geojson(scored, resolution),
         name=f'H3 damage grid r{resolution}',
@@ -181,6 +202,7 @@ for resolution in [5, 6, 7, 8, 9, 10]:
 
 
 def footprint_style(feature):
+    '''Defines styles of building footprints based on damage'''
     prediction = feature['properties'].get('prediction')
     damaged = prediction == 'damaged'
     return {
@@ -193,12 +215,13 @@ def footprint_style(feature):
 
 
 def footprint_highlight(_feature):
+    '''Defines mouse hover highlight for building footprint'''
     return {
         'fillOpacity': 0.58,
         'weight': 1.8,
     }
 
-
+# fields for footprint popup
 popup_fields = [
     'prediction',
     'confidence_pct',
@@ -207,6 +230,7 @@ popup_fields = [
     'id',
 ]
 
+# create building footprint layer
 footprints_layer = folium.GeoJson(
     scored[
         [
@@ -242,6 +266,7 @@ footprints_layer = folium.GeoJson(
 )
 footprints_layer.add_to(m)
 
+# create an empty placeholder overlay to appear in the layer control
 h3_control_layer = folium.FeatureGroup(
     name='H3 damage grid',
     show=True,
@@ -249,6 +274,7 @@ h3_control_layer = folium.FeatureGroup(
 )
 h3_control_layer.add_to(m)
 
+# set bounds for init of map
 bounds = scored.total_bounds
 m.fit_bounds(
     [
@@ -300,6 +326,15 @@ h3_layer_entries = ',\n'.join(
 )
 
 class H3Autoscale(MacroElement):
+    '''
+    Inject JavaScript that makes the H3 grid act like one toggleable layer.
+
+    Folium's layer control can only toggle concrete Leaflet layers. The H3
+    grid is actually several resolution-specific GeoJSON layers, so this macro
+    watches the placeholder H3 control layer, adds the resolution appropriate
+    for the current zoom, removes the prior H3 layer when zoom changes, and
+    keeps the H3 color legend in sync with the toggle state.
+    '''
     _template = Template(
         '''
         {% macro script(this, kwargs) %}
