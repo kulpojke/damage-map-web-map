@@ -315,11 +315,12 @@ m.fit_bounds(
 legend_html = '''
 <div class='map-legends'>
   <div class='footprint-legend map-legend'>
+    <div class='legend-title'>Building Damage Status</div>
     <div><span class='legend-dot damaged'></span>Damaged</div>
     <div><span class='legend-dot undamaged'></span>Undamaged</div>
   </div>
   <div id='h3-legend' class='h3-legend map-legend'>
-    <div class='legend-title'>H3 damaged share</div>
+    <div class='legend-title'>Percentage Damaged</div>
     <div><span class='legend-swatch h3-low'></span>0-24%</div>
     <div><span class='legend-swatch h3-some'></span>25-49%</div>
     <div><span class='legend-swatch h3-high'></span>50-74%</div>
