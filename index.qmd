@@ -19,9 +19,10 @@ execute:
 ```{python}
 from pathlib import Path
 
-from branca.element import Element
+from branca.element import Element, MacroElement, Template
 import folium
 import geopandas as gpd
+import h3
 ```
 
 ```{python}
@@ -69,6 +70,116 @@ folium.TileLayer(
 ).add_to(m)
 
 
+def h3_cell_feature(cell, resolution, records):
+    total = len(records)
+    damaged = int(records['prediction'].eq('damaged').sum())
+    undamaged = total - damaged
+    damage_rate = damaged / total if total else 0
+    avg_damage_prob = float(records['prob_damaged'].mean()) if total else 0
+
+    boundary = h3.cell_to_boundary(cell)
+    coordinates = [[lng, lat] for lat, lng in boundary]
+    coordinates.append(coordinates[0])
+
+    return {
+        'type': 'Feature',
+        'properties': {
+            'h3_cell': cell,
+            'resolution': resolution,
+            'buildings': total,
+            'damaged': damaged,
+            'undamaged': undamaged,
+            'damage_rate': round(damage_rate, 4),
+            'damage_pct': f'{100 * damage_rate:.1f}%',
+            'avg_damage_prob': round(avg_damage_prob, 4),
+            'avg_damage_prob_pct': f'{100 * avg_damage_prob:.1f}%',
+        },
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [coordinates],
+        },
+    }
+
+
+def h3_geojson(data, resolution):
+    h3_data = data[['prediction', 'prob_damaged', 'geometry']].copy()
+    points = h3_data.geometry.representative_point()
+    h3_data['h3_cell'] = [
+        h3.latlng_to_cell(point.y, point.x, resolution)
+        for point in points
+    ]
+
+    return {
+        'type': 'FeatureCollection',
+        'features': [
+            h3_cell_feature(cell, resolution, records)
+            for cell, records in h3_data.groupby('h3_cell')
+        ],
+    }
+
+
+def h3_color(damage_rate):
+    if damage_rate >= 0.75:
+        return '#b2182b'
+    if damage_rate >= 0.5:
+        return '#ef8a62'
+    if damage_rate >= 0.25:
+        return '#fddbc7'
+    return '#2166ac'
+
+
+def h3_style(feature):
+    damage_rate = feature['properties'].get('damage_rate') or 0
+    buildings = feature['properties'].get('buildings') or 0
+    return {
+        'color': '#4b5563',
+        'fillColor': h3_color(damage_rate),
+        'fillOpacity': min(0.6, 0.18 + (0.035 * buildings)),
+        'opacity': 0.72,
+        'weight': 0.9,
+    }
+
+
+def h3_highlight(_feature):
+    return {
+        'fillOpacity': 0.72,
+        'weight': 2.0,
+    }
+
+
+h3_layers = {}
+for resolution in [5, 6, 7, 8, 9, 10]:
+    h3_layer = folium.GeoJson(
+        h3_geojson(scored, resolution),
+        name=f'H3 damage grid r{resolution}',
+        show=False,
+        control=False,
+        style_function=h3_style,
+        highlight_function=h3_highlight,
+        tooltip=folium.GeoJsonTooltip(
+            fields=[
+                'resolution',
+                'buildings',
+                'damaged',
+                'undamaged',
+                'damage_pct',
+                'avg_damage_prob_pct',
+            ],
+            aliases=[
+                'H3 resolution',
+                'Buildings',
+                'Damaged',
+                'Undamaged',
+                'Damaged share',
+                'Mean damage probability',
+            ],
+            sticky=False,
+        ),
+    )
+    h3_layer.add_to(m)
+    h3_layers[resolution] = h3_layer.get_name()
+
+
 def footprint_style(feature):
     prediction = feature['properties'].get('prediction')
     damaged = prediction == 'damaged'
@@ -96,7 +207,7 @@ popup_fields = [
     'id',
 ]
 
-folium.GeoJson(
+footprints_layer = folium.GeoJson(
     scored[
         [
             'id',
@@ -128,7 +239,8 @@ folium.GeoJson(
         labels=True,
         max_width=360,
     ),
-).add_to(m)
+)
+footprints_layer.add_to(m)
 
 bounds = scored.total_bounds
 m.fit_bounds(
@@ -150,6 +262,96 @@ legend_html = '''
 m.get_root().html.add_child(Element(legend_html))
 
 folium.LayerControl(collapsed=False).add_to(m)
+
+h3_zoom_layers = [
+    (0, 8, 5),
+    (9, 10, 6),
+    (11, 12, 7),
+    (13, 14, 8),
+    (15, 16, 9),
+    (17, 99, 10),
+]
+h3_layer_entries = ',\n'.join(
+    (
+        '{'
+        f'minZoom: {min_zoom}, '
+        f'maxZoom: {max_zoom}, '
+        f'resolution: {resolution}, '
+        f'layer: {h3_layers[resolution]}'
+        '}'
+    )
+    for min_zoom, max_zoom, resolution in h3_zoom_layers
+)
+
+class H3Autoscale(MacroElement):
+    _template = Template(
+        '''
+        {% macro script(this, kwargs) %}
+        (function() {
+          var map = {{ this.map_name }};
+          var footprintLayer = {{ this.footprint_layer_name }};
+          var h3Layers = [
+            {{ this.h3_layer_entries | safe }}
+          ];
+          var activeH3Layer = null;
+
+          function layerForZoom(zoom) {
+            for (var i = 0; i < h3Layers.length; i++) {
+              if (zoom >= h3Layers[i].minZoom) {
+                if (zoom <= h3Layers[i].maxZoom) {
+                  return h3Layers[i];
+                }
+              }
+            }
+            return h3Layers[h3Layers.length - 1];
+          }
+
+          function updateH3Layer() {
+            var nextH3Layer = layerForZoom(map.getZoom());
+
+            if (activeH3Layer) {
+              if (activeH3Layer.layer !== nextH3Layer.layer) {
+                if (map.hasLayer(activeH3Layer.layer)) {
+                  map.removeLayer(activeH3Layer.layer);
+                }
+              }
+            }
+
+            if (!map.hasLayer(nextH3Layer.layer)) {
+              nextH3Layer.layer.addTo(map);
+            }
+
+            activeH3Layer = nextH3Layer;
+
+            if (map.hasLayer(footprintLayer)) {
+              if (footprintLayer.bringToFront) {
+                footprintLayer.bringToFront();
+              }
+            }
+          }
+
+          map.on('zoomend', updateH3Layer);
+          map.whenReady(updateH3Layer);
+        })();
+        {% endmacro %}
+        '''
+    )
+
+    def __init__(self, map_name, footprint_layer_name, h3_layer_entries):
+        super().__init__()
+        self._name = 'H3Autoscale'
+        self.map_name = map_name
+        self.footprint_layer_name = footprint_layer_name
+        self.h3_layer_entries = h3_layer_entries
+
+
+m.add_child(
+    H3Autoscale(
+        map_name=m.get_name(),
+        footprint_layer_name=footprints_layer.get_name(),
+        h3_layer_entries=h3_layer_entries,
+    )
+)
 
 m
 ```
