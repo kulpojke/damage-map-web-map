@@ -34,28 +34,45 @@ body {
   width: 100vw !important;
 }
 
-.footprint-legend {
+.map-legends {
+  bottom: 24px;
+  display: grid;
+  gap: 8px;
+  left: 16px;
+  position: fixed;
+  width: min(290px, calc(100vw - 32px));
+  z-index: 999;
+}
+
+.map-legend {
   backdrop-filter: blur(10px);
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
   border-radius: 6px;
   box-shadow: var(--shadow);
   color: var(--text);
-  position: fixed;
-  z-index: 999;
-}
-
-.footprint-legend {
-  bottom: 24px;
-  display: grid;
   font-size: 0.78rem;
-  gap: 7px;
-  left: 16px;
   padding: 12px;
-  width: min(290px, calc(100vw - 32px));
 }
 
-.footprint-legend div {
+.footprint-legend,
+.h3-legend {
+  display: grid;
+  gap: 7px;
+}
+
+.h3-legend[hidden],
+.h3-legend.is-hidden {
+  display: none;
+}
+
+.legend-title {
+  font-weight: 650;
+  margin-bottom: 1px;
+}
+
+.footprint-legend div,
+.h3-legend div {
   align-items: center;
   display: flex;
   gap: 7px;
@@ -76,6 +93,31 @@ body {
 
 .legend-dot.undamaged {
   background: var(--undamaged);
+}
+
+.legend-swatch {
+  border: 1px solid rgba(32, 44, 54, 0.24);
+  border-radius: 2px;
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 10px;
+  width: 16px;
+}
+
+.legend-swatch.h3-low {
+  background: #2166ac;
+}
+
+.legend-swatch.h3-some {
+  background: #fddbc7;
+}
+
+.legend-swatch.h3-high {
+  background: #ef8a62;
+}
+
+.legend-swatch.h3-severe {
+  background: #b2182b;
 }
 
 .legend-note {
@@ -118,7 +160,7 @@ body {
 }
 
 @media (max-width: 640px) {
-  .footprint-legend {
+  .map-legends {
     bottom: 14px;
     left: 10px;
     width: min(300px, calc(100vw - 20px));
