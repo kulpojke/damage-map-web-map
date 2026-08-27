@@ -16,8 +16,27 @@ execute:
   message: false
 ---
 
+
 ```{python}
+
+'''
+FUTURE:
++ At ~10k buildings: stop embedding full building polygons by default.
++ At ~25k buildings: use H3 aggregation as the default view and load footprints selectively.
++ At ~50k+ buildings: move to tiles, PMTiles, FlatGeobuf, or server/static vector-tile workflow.
+'''
+
 from pathlib import Path
+import site
+import sys
+
+user_site = site.getusersitepackages()
+if isinstance(user_site, str):
+    user_site = [user_site]
+sys.path = [
+    path for path in sys.path
+    if path not in user_site and not path.startswith(f'{site.USER_BASE}/')
+]
 
 from branca.element import Element, MacroElement, Template
 import folium
@@ -28,10 +47,11 @@ import h3
 ```{python}
 
 # paths to data
-DATA_PATH = Path('data/building_with _inference.geojson')
+DATA_PATH = Path('data/buildings_h3.geojson')
 DAMAGE_FIELD = 'predicted_class'
+H3_RESOLUTIONS = [5, 6, 7, 8, 9, 10]
 
-# load buildings
+# load buildings with precomputed H3 index columns
 buildings = gpd.read_file(DATA_PATH)
 if buildings.crs is None:
     buildings = buildings.set_crs('EPSG:4326')
@@ -116,16 +136,21 @@ def h3_cell_feature(cell, resolution, records):
 
 def h3_geojson(data, resolution):
     '''
-    Assigns building records to H3 cells and passes each group to h3_cell_feature()
+    Groups building records by H3 cell and passes each group to h3_cell_feature()
     Returns a GeoJSON FeatureCollection of H3 cells with map attributes
     '''
 
     h3_data = data[['prediction', 'prob_damaged', 'geometry']].copy()
-    points = h3_data.geometry.representative_point()
-    h3_data['h3_cell'] = [
-        h3.latlng_to_cell(point.y, point.x, resolution)
-        for point in points
-    ]
+    h3_column = f'h3_r{resolution}'
+    if h3_column in data.columns:
+        h3_data['h3_cell'] = data[h3_column]
+    else:
+        points = h3_data.geometry.representative_point()
+        h3_data['h3_cell'] = [
+            h3.latlng_to_cell(point.y, point.x, resolution)
+            for point in points
+        ]
+    h3_data = h3_data.dropna(subset=['h3_cell'])
 
     return {
         'type': 'FeatureCollection',
@@ -169,7 +194,7 @@ def h3_highlight(_feature):
 
 # create layers for each hexgrid resolution
 h3_layers = {}
-for resolution in [5, 6, 7, 8, 9, 10]: 
+for resolution in H3_RESOLUTIONS: 
     h3_layer = folium.GeoJson(
         h3_geojson(scored, resolution),
         name=f'H3 damage grid r{resolution}',

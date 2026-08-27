@@ -5,7 +5,7 @@
   "outputs": [
     {
       "name": "Current model output",
-      "url": "data/building_with _inference.geojson"
+      "url": "data/building_with_inference.geojson"
     }
   ]
 }

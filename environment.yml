@@ -9,6 +9,7 @@ dependencies:
   - nbclient
   - nbformat
   - pandas
+  - pytz
   - geopandas
   - shapely
   - folium
